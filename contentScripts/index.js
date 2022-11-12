@@ -10,158 +10,68 @@
 @------------------------------------------------@
 */
 
-(async function() {
+(async function () {
 	"use strict";
 
-	const popoverDB = require("../utils/StorageManager");
-	const wikiAPI = require("../api/WikipediaAPI");
-	const wiktAPI = require("../api/WiktionaryAPI");
-	const popoverManager = require("../models/popoverManager");
-	const popoverDesigner = require("../models/popoverDesigner");
-
-	var element = popoverDesigner.getBasicShell(appendOnBody);
-	var popover = popoverManager(element);
-	var cals = insertCals();
-	var wikipediaAPI = wikiAPI;
-	var wiktionaryAPI = wiktAPI;
-	var isPopoverEnabled = await popoverDB.retrieve('isEnabled');
-	var shortcut = await popoverDB.retrieve('shortcut');
-	var popupMode = await popoverDB.retrieve('popupMode');
-	var keyGroup = [];
-	var selectedString = '';
-
-	initDOMEvents();
+	const shortcutHelper = require("../utils/Shortcut");
+	const selectionHelper = require("../utils/Selection");
+	const PopoverHelper = require("./Popover");
+	const applicationSettings = new (require("../storageEntities/ApplicationSettings"));
+	const userPreferences = new (require("../storageEntities/UserPreferences"));
+	const storageHelper = new (require("../utils/Storage"));
 
 
-	////////////////// IMPLEMENTATION //////////////////
+	await applicationSettings.getAll();
+	await userPreferences.getAll();
+	let popoverInstance = new PopoverHelper();
+	let userSettings = {
+		isPopoverEnabled: userPreferences.list.filter((up) => up.label === "modal.isEnabled")[0].value,
+		shortcut: userPreferences.list.filter((up) => up.label === "shortcuts.toggleModal")[0].value
+	};
 
-	function initDOMEvents() {
-		var wikilink = document.body.querySelector('.js-wikilink');
-		var timeOutId = null;
 
-		popoverDB.onChanges((oldV, newV) => {
-			shortcut = newV.shortcut;
-			popupMode = newV.popupMode;
-			isPopoverEnabled = newV.isEnabled;
+	// Initialize an iframe element and insert it into the DOM
+	popoverInstance.iframeUrl = chrome.extension.getURL('pages/popoverGUI.html');
+	popoverInstance.iframeStyle = applicationSettings.list.filter((el) => el.label === "modal.style")[0].value;
+	popoverInstance.shadowMode = applicationSettings.list.filter((el) => el.label === "modal.shadowMode")[0].value
+	popoverInstance.insertIframe();
 
-			changePopupMode(newV.popupMode);
-		});
 
-		changePopupMode(popupMode);
+	// Listen for the shortcut to be triggered
+	shortcutHelper.shortcut = [userSettings.shortcut];
+	shortcutHelper.addEventListener(shortcutHelper.events.shortcutMatch, onShortcutMatch);
 
-		wikilink.addEventListener('mouseleave', onMouseLeave);
-		popover.addEventListener('thumbclick', ev => loadArticle(ev.detail.article.lang, ev.detail.article.id))
-		popover.addEventListener('tabselect', ev => loadWictionary(selectedString));
+	// Listen for changes on storage
+	storageHelper.addEventListener(storageHelper.events.storageChange, onStorageChange);
 
-		function changePopupMode(popupMode) {
-			if (popupMode === 'shortcut') {
-				document.removeEventListener('mouseup', onMouseUp);
-				document.addEventListener('keydown', onKeyDown)
-				document.addEventListener('keyup', onKeyUp)
-			} else if (popupMode === 'default') {
-				document.addEventListener('mouseup', onMouseUp);
-				document.removeEventListener('keydown', onKeyDown)
-				document.removeEventListener('keyup', onKeyUp)
-			}
-		}
+	popoverInstance.addEventListener(popoverInstance.events.focusOut, (ev) => popoverInstance.hide());
 
-		function onMouseLeave(ev) {
-			document.body.style.overflow = 'auto';
-			popover.hide();
-		}
 
-		function onKeyDown(ev) {
+	/**
+	 * Callback for when the user presses the shortcuts.toggleModal shortcut
+	 *
+	 * @param {Event} ev
+	 */
+	function onShortcutMatch(ev) {
+		let selectionObj = selectionHelper.getSelection();
+		let selectionString = selectionObj.toString();
+		let iframePosition = selectionHelper.getOffsetBottomPosition(selectionObj);
 
-			clearTimeout(timeOutId);
-
-			if (keyGroup.toString() === shortcut.toString()) {
-				startProcess();
-				keyGroup = [];
-			} else if (keyGroup.length < shortcut.length && !keyGroup.includes(ev.code)) {
-				keyGroup.push(ev.code);
-				onKeyDown(ev);
-			}
-			// console.table(keyGroup);
-
-			timeOutId = setTimeout(() => keyGroup = [], 10 * 1000);
-		}
-
-		function onKeyUp(ev) {
-			var index = keyGroup.indexOf(ev.code);
-			if (index !== -1) {
-				keyGroup.splice(index, 1);
-			}
-		}
-
-		function onMouseUp(ev) {
-			if (ev.which === 1 && !popover.isChild(`#${ev.target.id}`)) {
-				startProcess();
-			}
-		}
-
-	}
-
-	function startProcess() {
-		var wSelection = window.getSelection();
-		var selection = wSelection.toString();
-		var selContext = wSelection.focusNode.data;
-
-		if (isPopoverEnabled && !selection.isCollapsed && !isEmptySelection(selection)) {
-
-			popover.showPage('js-wikiSearches');
-			selectedString = selection;
-			wikipediaAPI.getPageList({ term: selection, range: selContext }).then(popover.setThumbnails);
-			wiktionaryAPI.getDefinitions(selection.toString()).then(popover.setDictionary);
-
-			document.body.style.overflow = 'hidden';
-			popover.isLoading({ area: 'thumbnails' });
-			popover.render(wSelection, cals[0], cals[1]);
+		if (userSettings.isPopoverEnabled && !selectionString.isCollapsed && !selectionHelper.isEmpty(selectionString)) {
+			popoverInstance.show(selectionString, iframePosition);
 		}
 	}
 
-	function loadArticle(language, pageId) {
-		popover.isLoading({ area: 'article' });
-
-		wikipediaAPI.getPageById({ pageId: pageId, imageSize: 250, language }).then(async article => {
-			popover.setArticle(article);
-			loadWictionary(article.title);
-		});
+	/**
+	 * Callback for when chrome.storage.sync changes
+	 *
+	 * @param {*} oldV
+	 * @param {*} newV
+	 */
+	function onStorageChange(oldV, newV) {
+		shortcut = newV.shortcut;
+		userSettings.isPopoverEnabled = newV.isEnabled;
+		popoverInstance.shortcut = shortcut;
 	}
 
-	function loadWictionary(title) {
-		wiktionaryAPI
-			.getDefinitions(title)
-			.then(resp => popover.setDictionary(resp))
-	}
-
-	function appendOnBody(popover) {
-		const div = document.createElement('div');
-		const shadow = div.attachShadow({ mode: 'open' });
-
-		div.classList.add('js-wikilink');
-		shadow.appendChild(popover);
-		document.body.appendChild(div);
-
-		return shadow.querySelector('.js-popover');
-	}
-
-	function insertCals() {
-		var cal1, cal2;
-		cal1 = createCal('cal1');
-		cal2 = createCal('cal2');
-		document.body.appendChild(cal1);
-		document.body.appendChild(cal2);
-
-
-		function createCal(id) {
-			return document.createRange().createContextualFragment(`<div id="${id}">&nbsp;</div>`);
-		}
-
-		return [document.querySelector('#cal1'), document.querySelector('#cal2')];
-	}
-
-	function isEmptySelection(selection) {
-		//If given argument is not empty neither is white spaces
-		return !(selection && /\S/.test(selection));
-	}
 }());

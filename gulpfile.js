@@ -14,7 +14,6 @@ const log = require('fancy-log');
 const watch = require('gulp-watch');
 
 
-gulp.task('document', generateDocumentation);
 gulp.task('prod', buildProd);
 
 
@@ -27,19 +26,21 @@ const paths = {
 		background: "background/",
 		contentScripts: "contentScripts/",
 		optionsPage: "optionsPage/",
-		browserAction: "browserAction/",
-		api: "api/",
-		docTypesDefinitions: "JSDocsTypes.js"
+		action: "action/",
+		docTypesDefinitions: "JSDocsTypes.js",
+		pages: "pages/",
+		root: "./"
 	},
 	prod: {
-		publicLibrary: "prod/public/",
+		publicLibrary: "prod/public/library/",
 		publicImages: "prod/public/images/",
 		locales: "prod/_locales/",
 		background: "prod/background/",
 		contentScripts: "prod/contentScripts/",
 		optionsPage: "prod/optionsPage/",
-		browserAction: "prod/browserAction/",
-		path: "prod/"
+		action: "prod/action/",
+		pages: "prod/pages",
+		root: "prod/",
 	},
 };
 
@@ -50,36 +51,40 @@ const paths = {
  * @param {*} done 
  */
 function buildProd(done) {
-	const filesToCopy = [
+	const notProcessedFiles = [
 		{ src: paths.dev.publicLibrary + "**/*.*", dest: paths.prod.publicLibrary },
 		{ src: paths.dev.publicImages + "icon01/*.png", dest: paths.prod.publicImages + "icon01/" },
-		{ src: paths.dev.manifest, dest: paths.prod.path },
+		{ src: paths.dev.manifest, dest: paths.prod.root },
 		{ src: paths.dev.locales + "en/*.*", dest: paths.prod.locales + "en" },
 		{ src: paths.dev.locales + "pt_BR/*.*", dest: paths.prod.locales + "pt_BR" },
 		{ src: paths.dev.locales + "pt_PT/*.*", dest: paths.prod.locales + "pt_PT" },
 		{ src: [paths.dev.optionsPage + "*.html", paths.dev.optionsPage + "*.css"], dest: paths.prod.optionsPage },
-		{ src: [paths.dev.browserAction + "*.html", paths.dev.browserAction + "*.css"], dest: paths.prod.browserAction },
-		{ src: paths.dev.contentScripts + "*.css", dest: paths.prod.contentScripts }
+		{ src: [paths.dev.action + "*.html", paths.dev.action + "*.css"], dest: paths.prod.action },
+		{ src: paths.dev.contentScripts + "*.css", dest: paths.prod.contentScripts },
+		{ src: paths.dev.pages + "*.html", dest: paths.prod.pages }
 	];
 
-	const filesToBundle = [
-		{ src: paths.dev.background + "eventPage.js", dest: paths.prod.background },
-		{ src: paths.dev.background + "messageManager.js", dest: paths.prod.background },
+	const processedJavascripts = [
+		// { src: paths.dev.background + "eventPage.js", dest: paths.prod.background },
+		// { src: paths.dev.background + "messageManager.js", dest: paths.prod.background },
+		{ src: paths.dev.background + "worker.js", dest: paths.prod.background },
 		{ src: paths.dev.contentScripts + "index.js", dest: paths.prod.contentScripts },
 		{ src: paths.dev.optionsPage + "index.js", dest: paths.prod.optionsPage },
-		{ src: paths.dev.browserAction + "index.js", dest: paths.prod.browserAction }
+		{ src: paths.dev.action + "index.js", dest: paths.prod.action },
+		{ src: paths.dev.pages + "popoverGUI.js", dest: paths.prod.pages }
 	];
 
-	const htmlToProcess = "prod/**/*.html";
+	const processedHtmls = "prod/**/*.html";
 
-	bundle(filesToBundle).then(() => copyFiles(filesToCopy)
-		.then(() => injectFiles(htmlToProcess)
-			.on('end', () => {
-				zipFiles({ src: "prod/**", dest: './' });
-				done();
-			})
-		)
-	);
+	bundle(processedJavascripts)
+		.then(() => copyFiles(notProcessedFiles)
+			.then(() => injectFiles(processedHtmls)
+				.on('end', () => {
+					zipFiles({ src: paths.prod.root + "**", dest: paths.dev.root });
+					done();
+				})
+			)
+		);
 }
 
 /**
@@ -153,16 +158,4 @@ function injectFiles(src) {
 function zipFiles({ src, dest }) {
 	log.info("📦 Zipping files...");
 	return gulp.src(src).pipe(zip('prod.zip')).pipe(gulp.dest(dest));
-}
-
-/**
- * Generates the automatica documentation for the project
- * @param {*} done 
- */
-function generateDocumentation(done) {
-	gulp.src([paths.dev.api + "*.js", paths.dev.docTypesDefinitions], { read: false })
-		.pipe(gulpif(args.verbose, gulpprint()))
-		.pipe(jsdoc(done));
-
-	done();
 }

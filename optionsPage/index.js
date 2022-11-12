@@ -1,4 +1,4 @@
-(function() {
+(function () {
 	'use strict';
 	/**
 	 * Shorthand function for querySelector
@@ -7,158 +7,110 @@
 	 */
 	const DOM = elem => document.body.querySelector(elem);
 
-	var mdc = require("@material/snackbar/dist/mdc.snackbar");
-	const popoverDB = require("../utils/StorageManager");
-	const MDCSnackbar = mdc.MDCSnackbar;
-	const MDCSnackbarFoundation = mdc.MDCSnackbarFoundation;
-	mdc.MDCSnackbar.attachTo(DOM('.mdc-snackbar'));
-	const snackbar = new MDCSnackbar(DOM('.mdc-snackbar'))
-	var shortcutSnapshot = '';
-	var keyGroup = {
-		codes: [],
-		pressing: []
-	};
+	const userPreferences = new (require("../storageEntities/UserPreferences"));
+	const applicationSettings = new (require("../storageEntities/ApplicationSettings"));
+	const shortcutHelper = require("../utils/Shortcut");
 
-	initializer().DOMEvents()
-	initializer().elementsValues()
-	initializer().storageEvents()
-
-
+	initialization();
+	watchShortcutInput();
+	watchFormChange();
 
 	////////////////// IMPLEMENTATION //////////////////
 
-	function initializer() {
+	/**
+	 * Initializes the necessary first load data.
+	 */
+	async function initialization() {
+		await applicationSettings.getAll();
+		await userPreferences.getAll();
 
-		/**
-		 * Initializes DOM events listeners
-		 */
-		function DOMEvents() {
-			DOM('.js-popupShortcut').addEventListener('keydown', onKeyDown);
-			DOM('.js-popupShortcut').addEventListener('keyup', onKeyUp);
-			DOM('.js-popupShortcut').addEventListener('focus', onFocus);
-			DOM('.js-popupShortcut').addEventListener('focusout', onFocusOut);
-			DOM('.js-popupMode').addEventListener('change', savePopupMode);
-			DOM('.js-fallbackLanguage').addEventListener('change', saveLanguage);
-			DOM('.js-nlpLanguages').addEventListener('change', saveNlpLanguages);
-		}
+		applicationSettings.list.forEach((el) => {
+			let id = `#${el.label.replace(".", "_")}`;
 
-		/**
-		 * Initializes DOM Elements values
-		 */
-		function elementsValues() {
-			syncValues();
-		}
+			if (!DOM(id)) {
+				return;
+			}
+			DOM(id).value = el.value;
+		});
 
-		/**
-		 * Initializes storage changes listeners.
-		 */
-		function storageEvents() {
-			popoverDB.onChanges(syncValues);
-		}
+		userPreferences.list.forEach((el) => {
+			let id = `#${el.label.replace(".", "_")}`;
 
-		
-
-		return {
-			DOMEvents,
-			elementsValues,
-			storageEvents
-		};
-
+			if (!DOM(id)) {
+				return;
+			}
+			DOM(id).value = el.value;
+		});
 	}
 
-	function onFocus(ev) {
-		var val = DOM('.js-popupShortcut').value;
-		if (val) {
-			shortcutSnapshot = val;
-		}
-		DOM('.js-popupShortcut').value = '';
+	/**
+	 * Handles the shortcut input field functionalities.
+	 */
+	function watchShortcutInput() {
+
+		var input = DOM("#shortcuts_toggleModal");
+
+		// 1. On focusin empties the input 
+		input.addEventListener("focusin", (ev) => {
+			input.dataset.keyGroupDown = input.value;
+			input.value = "";
+		});
+
+		// 2. On keydown sets the keys pressed
+		shortcutHelper.addEventListener(shortcutHelper.events.keyGroupDown, (ev) => {
+			if (ev.detail.ev.target !== input) {
+				return;
+			}
+
+			if (ev.detail.keyGroup.length < input.value.split(",").length) {
+				return;
+			}
+
+			input.value = ev.detail.keyGroup;
+		});
+
+		// 3. On focusout rollback to original value, if empty
+		input.addEventListener("focusout", (ev) => {
+			if (input.value !== "") {
+				// Manually triggers change event, else it won't trigger 
+				DOM("#form_userPreferences").dispatchEvent(new Event("change"));
+				return;
+			}
+
+			input.value = input.dataset.keyGroupDown;
+		});
 	}
 
-	function onFocusOut(ev) {
-		if (DOM('.js-popupShortcut').value) {
-			saveShortcut().then(() => {
-				snackbar.show({ message: 'Shortcut saved!' });
+	/**
+	 * Saves updates to forms.
+	 */
+	function watchFormChange() {
+		var formApplicationSettings = DOM("#form_applicationSettings");
+		var formUserPreferences = DOM("#form_userPreferences");
 
-				var instructionText = DOM('#instructions #shortcut').innerText;
-				DOM('#instructions #shortcut').innerText = DOM('.js-popupShortcut').value.replace(",", " + ");
-			});
-		} else {
-			DOM('.js-popupShortcut').value = shortcutSnapshot;
-		}
+		formApplicationSettings.addEventListener("change", async (ev) => {
+			for (const el of formApplicationSettings.elements) {
 
-	}
+				let label = el.id.replace("_", ".");
+				await applicationSettings.get(label);
 
-	function onKeyDown(ev) {
-		console.log(keyGroup.pressing);
-		if (keyGroup.pressing.length === 0) {
-			keyGroup.codes = [];
-		}
-		if (keyGroup.codes.length < 3 && !keyGroup.codes.includes(ev.code)) {
-			keyGroup.pressing.push(ev.keyCode);
-			keyGroup.codes.push(ev.code);
-			DOM('.js-popupShortcut').value = keyGroup.codes.toString();
-		}
-	}
+				applicationSettings.value = el.value;
+				applicationSettings.modifiedOn = new Date();
+				await applicationSettings.update();
+			}
+		});
 
-	function onKeyUp(ev) {
-		console.log(keyGroup.pressing);
-		var index = keyGroup.codes.indexOf(ev.code);
-		if (index !== -1) {
-			keyGroup.pressing.splice(index, 1);
-		}
+		formUserPreferences.addEventListener("change", async (ev) => {
+			for (const el of formUserPreferences.elements) {
 
-	}
+				let label = el.id.replace("_", ".");
+				await userPreferences.get(label);
 
-	async function syncValues(oldV, newV) {
-		var instructionText = DOM('#instructions #shortcut').text;
-		var fallbackLang = newV && newV['fallbackLang'] || await popoverDB.retrieve('fallbackLang');
-		var popupMode = newV && newV['popupMode'] || await popoverDB.retrieve('popupMode');
-		var nlpLangs = newV && newV['nlpLangs'] || await popoverDB.retrieve('nlpLangs');
-		var shortcut = newV && newV['shortcut'] || await popoverDB.retrieve('shortcut');
-
-		DOM('.js-fallbackLanguage').value = fallbackLang;
-		DOM('.js-popupMode').value = popupMode;
-		DOM('.js-popupShortcut').value = shortcut.toString();
-		DOM('#instructions #shortcut').innerText = shortcut.toString().replace(",", " + ");
-
-		var checkboxList = document.body.querySelectorAll('.js-nlpLang');
-		checkboxList.forEach(chkbx => {
-			if (nlpLangs.includes(chkbx.value)) {
-				chkbx.checked = true;
+				userPreferences.value = el.value;
+				userPreferences.modifiedOn = new Date();
+				await userPreferences.update();
 			}
 		});
 	}
 
-	function saveLanguage() {
-		var fallbackLanguage = DOM('.js-fallbackLanguage').value;
-		popoverDB.update('fallbackLang', fallbackLanguage).then(() => {
-			snackbar.show({ message: ' Language saved' });
-		})
-	}
-
-	function savePopupMode() {
-		var popupMode = DOM('.js-popupMode').value;
-		popoverDB.update('popupMode', popupMode).then(() => {
-			snackbar.show({ message: 'Popup trigger saved' });
-		});
-	}
-
-	function saveShortcut() {
-		var shortcut = keyGroup.codes;
-		return popoverDB.update('shortcut', shortcut);
-	}
-
-	function saveNlpLanguages() {
-		var languages = [];
-		var checkboxList = document.body.querySelectorAll('.js-nlpLang');
-
-		checkboxList.forEach(chkbx => {
-			if (chkbx.checked) {
-				languages.push(chkbx.value);
-			}
-		});
-		popoverDB.update('nlpLangs', languages).then(() => {
-			snackbar.show({ message: 'Detection Algorithms saved' });
-		});
-	}
 }());

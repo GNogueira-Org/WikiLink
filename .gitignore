@@ -6,6 +6,7 @@ node_modules/*
 
 # Production ready files
 prod/*
+/prod_
+/prod.zip
 
 # Docs generated automatically by gulp-jsdoc3 and gulp.
-prod.zip
